@@ -68,7 +68,7 @@ int main(void)
     
         IndexBuffer ib(indices, 6);
 
-        Shader shader("res/shaders/Basic.shader");
+        Shader shader("res/shaders/first.shader");
         shader.Bind();
 
 
