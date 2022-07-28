@@ -13,8 +13,8 @@
 #include "Shader.h"
 #include "Texture.h"
 
-
-
+#include "glm\glm.hpp"
+#include "glm\gtc\matrix_transform.hpp"
 
 
 int main(void)
@@ -31,7 +31,7 @@ int main(void)
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     
     /* Create a windowed mode window and its OpenGL context */
-    window = glfwCreateWindow(640, 480, "Hello World", NULL, NULL);
+    window = glfwCreateWindow(960, 540, "Hello World", NULL, NULL);
     if (!window)
     {
         glfwTerminate();
@@ -46,10 +46,10 @@ int main(void)
 
     {
         float positions[]{
-            -0.5f, -0.5f, 0.0f, 0.0f,
-             0.5f, -0.5f, 1.0f, 0.0f,
-             0.5f, 0.5f, 1.0f, 1.0f,
-            -0.5f, 0.5f, 0.0f, 1.0f
+            100.0f, 100.0f, 0.0f, 0.0f,
+            200.0f, 100.0f, 1.0f, 0.0f,
+            200.0f, 200.0f, 1.0f, 1.0f,
+            100.0f, 200.0f, 0.0f, 1.0f
         };
         unsigned int indices[]
         {
@@ -57,7 +57,8 @@ int main(void)
             2, 3, 0
         };
         GLCall(glEnable(GL_BLEND));
-        GLCall(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+        GLCall(glBlendFunc(GL_SRC_ALPHA /*src*/, GL_ONE_MINUS_SRC_ALPHA /*dest*/));
+        //GLCall(glBlendEquation(Mode -- how we combine source and destination colors -- default GL_ADD));
 
         VertexArray va;
         VertexBuffer vb(positions, 4 * 4 * sizeof(float));
@@ -72,11 +73,19 @@ int main(void)
     
         IndexBuffer ib(indices, 6);
 
+        glm::mat4 proj = glm::ortho(0.0f, 640.0f, 0.0f, 480.0f, -1.0f, 1.0f);
+        glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(100, 0, 0));
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(100, 100, 0));
+
+        glm::mat4 mvp = proj * view * model;
+
         Shader shader("res/shaders/first.shader");
         shader.Bind();
 
 
-        //shader.SetUniform4f("u_Color", 0.2f, 0.3f, 0.8f, 1.0f);
+        shader.SetUniform4f("u_Color", 0.2f, 0.3f, 0.8f, 1.0f);
+        shader.SetUniformMatrix4f("u_MVP", mvp);
+
         va.Unbind();
         Texture texture("res/print.png");
         texture.Bind();
