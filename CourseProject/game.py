@@ -1,10 +1,42 @@
-import pygame as pg
+#change from pygame to glfw for accurate mouse movements
+import glfw
+import glfw.GLFW as GLFW_CONSTANTS
+# import pygame as pg
 from OpenGL.GL import *
 import numpy as np
 import ctypes
 from OpenGL.GL.shaders import compileProgram, compileShader
 import pyrr
+from PIL import Image
 
+
+SCREEN_WIDTH = 640
+SCREEN_HEIGHT = 480
+RETURN_ACTION_CONTINUE = 0
+RETURN_ACTION_END = 1
+
+def initialize_glfw():
+    glfw.init()
+    glfw.window_hint(GLFW_CONSTANTS.GLFW_CONTEXT_VERSION_MAJOR, 3)
+    glfw.window_hint(GLFW_CONSTANTS.GLFW_CONTEXT_VERSION_MINOR, 3)
+    glfw.window_hint(
+        GLFW_CONSTANTS.GLFW_OPENGL_PROFILE,
+        GLFW_CONSTANTS.GLFW_OPENGL_CORE_PROFILE
+    )
+    glfw.window_hint(
+        GLFW_CONSTANTS.GLFW_OPENGL_FORWARD_COMPAT,
+        GLFW_CONSTANTS.GLFW_TRUE
+    )
+    glfw.window_hint(GLFW_CONSTANTS.GLFW_DOUBLEBUFFER, GL_FALSE)
+
+    window = glfw.create_window(SCREEN_WIDTH, SCREEN_HEIGHT, "My Game", None, None)
+    glfw.make_context_current(window)
+    glfw.set_input_mode(
+        window,
+        GLFW_CONSTANTS.GLFW_CURSOR,
+        GLFW_CONSTANTS.GLFW_CURSOR_HIDDEN
+    )
+    return window
 
 def loadMesh(filename: str) -> list[float]:
     """
@@ -124,24 +156,195 @@ class Cube:
         self.position = np.array(position, dtype=np.float32)
         self.eulers = np.array(eulers, dtype=np.float32)
 
-class App:
-    def __init__(self):
-        pg.init()
-        pg.display.set_mode((640, 480), pg.OPENGL | pg.DOUBLEBUF)
-        self.clock = pg.time.Clock()
-        glClearColor(0.1, 0.2, 0.2, 1)
+class Player:
+    def __init__(self, position):
+        self.position = np.array(position, dtype=np.float32)
+        #Angle in the horizontal direction (North, east, south, west)
+        self.theta = 0
+        #Angle in the vertical direction (up, down)
+        self.phi = 0
+        #for forward, up and right
+        self.update_vectors()
 
+    def update_vectors(self):
+        #we are using spherical coordinates for this.
+        self.forwards = np.array(
+            [
+                np.cos(np.deg2rad(self.theta))*np.cos(np.deg2rad(self.phi)),
+                np.sin(np.deg2rad(self.theta))*np.cos(np.deg2rad(self.phi)),
+                np.sin(np.deg2rad(self.phi))
+            ]
+        )
+        globalUp = np.array([0,0,1], dtype=np.float32)
+
+        #for right, we will cross product between the forwards and up direction. We will also use cross product for up
+        self.right = np.cross(self.forwards, globalUp)
+        self.up = np.cross(self.right, self.forwards)
+
+class Scene:
+    def __init__(self):
+        self.cubes = [
+            Cube(
+            position=[6,0,0],
+            eulers=[0,0,0])
+        ]
+        self.player = Player(position=[0,0,2])
+
+    def update(self, rate):
+        for cube in self.cubes:
+            cube.eulers[2] +=  0.25 * rate
+            if cube.eulers[2] > 360:
+                cube.eulers[2] -= 360
+
+    #moving the player
+    def move_player(self, dPos):
+        dPos = np.array(dPos, dtype=np.float32)
+        self.player.position += dPos
+    def spin_player(self, dTheta, dPhi):
+        #horizontal spinning
+        self.player.theta += dTheta
+        if self.player.theta > 360:
+            self.player.theta -= 360
+        if self.player.theta < 0:
+            self.player.theta += 360
+
+        #vertical spinning done so that player cannot look too high up or too low down
+        self.player.phi = min(89, max(-89, self.player.phi +dPhi))
+        self.player.update_vectors()
+
+class App:
+    def __init__(self, window):
+        self.window = window
+        self.renderer = GraphicsEngine()
+        self.scene = Scene()
+
+        self.lastTime = glfw.get_time()
+        self.currentTime = 0
+        self.numFrames = 0
+        self.frameTime = 0
+        # self.cube = Cube(
+        #     position=[0, 0, -3],
+        #     eulers=[0, 0, 0]
+        # )
+        """
+        w : 1
+        a : 2
+        w and a : 3
+        s : 4
+        w and s : 5
+        a and s : 6
+        w and a and s: 7
+        d : 8
+        w and d : 9
+        a and d : 10
+        w and a and d: 11 
+        s and d: 12
+        w and s and d: 13
+        a and s and d: 14
+        w and a and s and d: 15
+        """
+        self.walk_offset_lookup = {
+            1 : 0,
+            2 : 90,
+            3 : 45,
+            4 : 180,
+            6 : 135,
+            7 : 90,
+            8 : 270,
+            9 : 315,
+            11 : 0,
+            12 : 225,
+            13 : 270,
+            14 : 180
+        }
+
+        self.main_loop()
+
+
+
+    def main_loop(self):
+        running = True
+        while running:
+            if glfw.window_should_close(self.window) or glfw.get_key(self.window, GLFW_CONSTANTS.GLFW_KEY_ESCAPE) == GLFW_CONSTANTS.GLFW_PRESS:
+               running = False
+
+            self.handleKeys()
+            self.handleMouse()
+
+            glfw.poll_events()
+
+            self.scene.update(self.frameTime / 16.7)
+            self.renderer.render(self.scene)
+
+                #update cube
+                    # self.cube.eulers[2] += 0.2
+                    # if (self.cube.eulers[2] > 360):
+                    #     self.cube.eulers[2] -= 360
+
+                #refresh screen
+                #timing
+            self.calculateFramerate()
+        self.quit()
+
+    def handleKeys(self):
+        """
+            Takes action based on the keys currently pressed.
+        """
+        combo = 0
+        directionModifier = 0
+        if glfw.get_key(self.window, GLFW_CONSTANTS.GLFW_KEY_W) == GLFW_CONSTANTS.GLFW_PRESS:
+            combo += 1
+        if glfw.get_key(self.window, GLFW_CONSTANTS.GLFW_KEY_A) == GLFW_CONSTANTS.GLFW_PRESS:
+            combo += 2
+        if glfw.get_key(self.window, GLFW_CONSTANTS.GLFW_KEY_S) == GLFW_CONSTANTS.GLFW_PRESS:
+            combo += 4
+        if glfw.get_key(self.window, GLFW_CONSTANTS.GLFW_KEY_D) == GLFW_CONSTANTS.GLFW_PRESS:
+            combo += 8
+
+        if combo in self.walk_offset_lookup:
+            directionModifier = self.walk_offset_lookup[combo]
+            dPos = [
+                #...................................................
+                # set the time for the movement using the keys here
+                #...................................................
+                0.1 * self.frameTime / 16.7 * np.cos(np.deg2rad(self.scene.player.theta + directionModifier)),
+                0.1 * self.frameTime / 16.7 * np.sin(np.deg2rad(self.scene.player.theta + directionModifier)),
+                0
+            ]
+            self.scene.move_player(dPos)
+
+    def handleMouse(self):
+        (x,y) = glfw.get_cursor_pos(self.window)
+        rate = self.frameTime / 16.7
+        theta_increment = rate * ((SCREEN_WIDTH / 2) - x)
+        phi_increment = rate * ((SCREEN_HEIGHT / 2) - y)
+        self.scene.spin_player(theta_increment, phi_increment)
+        glfw.set_cursor_pos(self.window, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
+
+    def calculateFramerate(self):
+        self.currentTime = glfw.get_time()
+        delta = self.currentTime - self.lastTime
+        if (delta >= 1):
+            framerate = max(1, int(self.numFrames / delta))
+            glfw.set_window_title(self.window, f"Running at {framerate} fps.")
+            self.lastTime = self.currentTime
+            self.numFrames = -1
+            self.frameTime = float(1000.0/max(1,framerate))
+        self.numFrames += 1
+
+    def quit(self):
+        self.renderer.quit()
+
+class GraphicsEngine:
+    def __init__(self):
+        self.random_texture = Material("textures/queen.png")
+        self.cube_mesh = Mesh("models/cube.obj")
+        #initialize OpenGL
+        glClearColor(0.1, 0.2, 0.2, 1)
         self.shader = self.createShader("shaders/vertex.txt", "shaders/fragment.txt")
         glUseProgram(self.shader)
         glUniform1i(glGetUniformLocation(self.shader, "ImageTexture"), 0)
-
-        self.cube = Cube(
-            position=[0, 0, -3],
-            eulers=[0, 0, 0]
-        )
-
-        self.cube_mesh = Mesh("models/cube.obj")
-        self.random_texture = Material("textures/queen.png")
+        glEnable(GL_DEPTH_TEST)
 
         projection_transform = pyrr.matrix44.create_perspective_projection(
             fovy=45, aspect=640 / 480,
@@ -152,9 +355,7 @@ class App:
             1, GL_FALSE, projection_transform
         )
         self.modelMatrixLocation = glGetUniformLocation(self.shader, "model")
-
-        self.main_loop()
-
+        self.viewMatrixLocation = glGetUniformLocation(self.shader, "view")
     def createShader(self, vertexFilepath, fragmentFilepath):
         with open(vertexFilepath, 'r') as f:
             vertex_src = f.readlines()
@@ -166,59 +367,53 @@ class App:
         )
         return shader
 
-    def main_loop(self):
-        running = True
-        while running:
-            for event in pg.event.get():
-                if event.type == pg.QUIT:
-                    running = False
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+    def render(self, scene):
+        #refresh screen
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        # glEnable(GL_BLEND)
+        # glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
-                #update cube
-                self.cube.eulers[2] += 0.2
-                if (self.cube.eulers[2] > 360):
-                    self.cube.eulers[2] -= 360
+        glUseProgram(self.shader)
 
-                #refresh screen
-                glEnable(GL_BLEND)
-                glEnable(GL_DEPTH_TEST)
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        view_transformation = pyrr.matrix44.create_look_at(
+            eye= scene.player.position,
+            target= scene.player.position + scene.player.forwards,
+            up = scene.player.up,
+            dtype=np.float32
+        )
+        glUniformMatrix4fv(self.viewMatrixLocation, 1, GL_FALSE, view_transformation)
 
-                glUseProgram(self.shader)
-                self.random_texture.use()
+        self.random_texture.use()
+        glBindVertexArray(self.cube_mesh.vao)
 
-                model_transformation = pyrr.matrix44.create_identity(dtype=np.float32)
-                model_transformation = pyrr.matrix44.multiply(
-                    m1 = model_transformation,
-                    m2 = pyrr.matrix44.create_from_eulers(
-                        eulers=np.radians(self.cube.eulers),
-                        dtype=np.float32
-                    )
+        for cube in scene.cubes:
+            model_transformation = pyrr.matrix44.create_identity(dtype=np.float32)
+            model_transformation = pyrr.matrix44.multiply(
+                m1= model_transformation,
+                m2= pyrr.matrix44.create_from_eulers(
+                    eulers=np.radians(cube.eulers),
+                    dtype=np.float32
                 )
-                model_transformation = pyrr.matrix44.multiply(
-                    m1=model_transformation,
-                    m2=pyrr.matrix44.create_from_translation(
-                        vec=self.cube.position,
-                        dtype=np.float32
-                    )
+            )
+            model_transformation = pyrr.matrix44.multiply(
+                m1=model_transformation,
+                m2=pyrr.matrix44.create_from_translation(
+                    vec= cube.position,
+                    dtype=np.float32
                 )
+            )
+            glUniformMatrix4fv(self.modelMatrixLocation, 1, GL_FALSE, model_transformation)
 
-                glUniformMatrix4fv(self.modelMatrixLocation, 1, GL_FALSE, model_transformation)
+            glDrawArrays(GL_TRIANGLES, 0, self.cube_mesh.vertex_count)
 
-                glBindVertexArray(self.cube_mesh.vao)
-                glDrawArrays(GL_TRIANGLES, 0, self.cube_mesh.vertex_count)
-
-                pg.display.flip()
-                self.clock.tick(60)
-        self.quit()
+        glFlush()
+        # pg.display.flip()
 
     def quit(self):
         self.cube_mesh.destroy()
         self.random_texture.destroy()
         glDeleteProgram(self.shader)
-        pg.quit()
-
-
+        # pg.quit()
 class Mesh:
     """
         A mesh that can represent an obj model.
@@ -276,7 +471,6 @@ class Mesh:
 
         glDeleteVertexArrays(1, (self.vao,))
         glDeleteBuffers(1, (self.vbo,))
-
 
 # class CubeMesh:
 #     # x,y,z,s,t
@@ -356,12 +550,15 @@ class Material:
         glBindTexture(GL_TEXTURE_2D, self.texture)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        image = pg.image.load(filepath).convert_alpha()
-        image_width, image_height = image.get_rect().size
-        image_data = pg.image.tostring(image, "RGBA")
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data)
+
+        with Image.open(filepath, mode = 'r') as image:
+            # image = pg.image.load(filepath).convert_alpha()
+            image_width, image_height = image.size
+            image = image.convert("RGBA")
+            image_data = bytes(image.tobytes())
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image_width, image_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data)
         glGenerateMipmap(GL_TEXTURE_2D)
 
     def use(self):
@@ -371,4 +568,5 @@ class Material:
     def destroy(self):
         glDeleteTextures(1,(self.texture,))
 if __name__ == "__main__":
-    myapp = App()
+    window = initialize_glfw()
+    myapp = App(window)
