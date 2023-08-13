@@ -1,4 +1,5 @@
 #change from pygame to glfw for accurate mouse movements
+import math
 import glfw
 import glfw.GLFW as GLFW_CONSTANTS
 # import pygame as pg
@@ -192,8 +193,13 @@ class Scene:
     def __init__(self):
         self.cubes = [
             Cube(
-            position=[6,0,0],
+            position=[6,0,1],
             eulers=[0,0,0]),
+        ]
+        self.bblights = [
+            Cube(
+                position=[3, 0, 0.5],
+                eulers=[0, 0, 0]),
         ]
         self.lights = [
             Light(
@@ -209,15 +215,19 @@ class Scene:
                 ],
                 strength=3
             )
-            for i in range(4)
+            for i in range(8)
         ]
         self.player = Player(position=[0,0,2])
 
+
     def update(self, rate):
+
+        #cube is rotated here.
+
         for cube in self.cubes:
-            cube.eulers[2] +=  0.25 * rate
-            if cube.eulers[2] > 360:
-                cube.eulers[2] -= 360
+            cube.eulers[1] +=  0.25 * rate
+            if cube.eulers[1] > 360:
+                cube.eulers[1] -= 360
 
     #moving the player
     def move_player(self, dPos):
@@ -362,14 +372,21 @@ class App:
 #everything related to rendering is done here in GraphicsEngine
 class GraphicsEngine:
     def __init__(self):
-        self.random_texture = Material("textures/wood.jpeg")
-        self.cube_mesh = Mesh("models/cube.obj")
         #initialize OpenGL
-        glClearColor(0.1, 0.2, 0.2, 1)
+        glClearColor(0, 0, 0, 1)
         self.shader = self.createShader("shaders/vertex.txt", "shaders/fragment.txt")
         glUseProgram(self.shader)
         glUniform1i(glGetUniformLocation(self.shader, "ImageTexture"), 0)
+
         glEnable(GL_DEPTH_TEST)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        self.random_texture = Material("textures/wood.jpeg")
+        self.cube_mesh = Mesh("models/cube.obj")
+
+        self.light_texture = Material("billboards/greenlight.png")
+        self.light_billboard = BillBoard(w=0.2, h=0.1)
 
         projection_transform = pyrr.matrix44.create_perspective_projection(
             fovy=45, aspect=640 / 480,
@@ -385,20 +402,21 @@ class GraphicsEngine:
             "position":
                 [
                     glGetUniformLocation(self.shader, f"Lights[{i}].position")
-                    for i in range(4)
+                    for i in range(8)
                 ],
             "color":
                 [
                     glGetUniformLocation(self.shader, f"Lights[{i}].color")
-                    for i in range(4)
+                    for i in range(8)
                 ],
             "strength":
                 [
                     glGetUniformLocation(self.shader, f"Lights[{i}].strength")
-                    for i in range(4)
+                    for i in range(8)
                 ]
         }
         self.cameraPosition = glGetUniformLocation(self.shader, "cameraPosition")
+        self.tintPosition = glGetUniformLocation(self.shader, "tint")
 
     def createShader(self, vertexFilepath, fragmentFilepath):
         with open(vertexFilepath, 'r') as f:
@@ -437,6 +455,7 @@ class GraphicsEngine:
         self.random_texture.use()
         glBindVertexArray(self.cube_mesh.vao)
 
+
         for cube in scene.cubes:
             model_transformation = pyrr.matrix44.create_identity(dtype=np.float32)
             model_transformation = pyrr.matrix44.multiply(
@@ -457,12 +476,44 @@ class GraphicsEngine:
 
             glDrawArrays(GL_TRIANGLES, 0, self.cube_mesh.vertex_count)
 
+
+        for light in scene.lights:
+            self.light_texture.use()
+            glUniform3fv(self.tintPosition, 1, light.color)
+
+            directionFromPlayer = light.position - scene.player.position
+            angle1 = np.arctan2(-directionFromPlayer[1], directionFromPlayer[0])
+            dist2d = math.sqrt(directionFromPlayer[0]**2 + directionFromPlayer[1]**2)
+            angle2 = np.arctan2(directionFromPlayer[2], dist2d)
+
+            model_transform = pyrr.matrix44.create_identity(dtype=np.float32)
+            model_transform = pyrr.matrix44.multiply(
+                model_transform,
+                pyrr.matrix44.create_from_y_rotation(theta = angle2, dtype=np.float32)
+            )
+            model_transform = pyrr.matrix44.multiply(
+                model_transform,
+                pyrr.matrix44.create_from_z_rotation(theta=angle1, dtype=np.float32)
+            )
+            model_transform = pyrr.matrix44.multiply(
+                model_transform,
+                pyrr.matrix44.create_from_translation(vec=light.position, dtype=np.float32)
+            )
+
+            glUniformMatrix4fv(self.modelMatrixLocation, 1, GL_FALSE, model_transform)
+            glBindVertexArray(self.light_billboard.vao)
+            glDrawArrays(GL_TRIANGLES, 0, self.light_billboard.vertex_count)
+
+        glUniform3fv(self.tintPosition, 1, np.array([1,1,1], dtype=np.float32))
+
         glFlush()
         # pg.display.flip()
 
     def quit(self):
         self.cube_mesh.destroy()
         self.random_texture.destroy()
+        self.light_billboard.destroy()
+        self.light_texture.destroy()
         glDeleteProgram(self.shader)
         # pg.quit()
 class Mesh:
@@ -514,15 +565,6 @@ class Mesh:
         """
             Free any allocated memory.
         """
-
-        glDeleteVertexArrays(1, (self.vao,))
-        glDeleteBuffers(1, (self.vbo,))
-
-    def destroy(self) -> None:
-        """
-            Free any allocated memory.
-        """
-
         glDeleteVertexArrays(1, (self.vao,))
         glDeleteBuffers(1, (self.vbo,))
 
@@ -621,6 +663,46 @@ class Material:
 
     def destroy(self):
         glDeleteTextures(1,(self.texture,))
+
+class BillBoard:
+    def __init__(self, w, h):
+
+        #x, y, z, s, t, normal
+        self.vertices =  (
+            0, -w/2,  h/2, 0, 0, 1, 0, 0,
+            0, -w/2, -h/2, 0, 1, 1, 0, 0,
+            0,  w/2, -h/2, 1, 1, 1, 0, 0,
+
+            0, -w/2,  h/2, 0, 0, 1, 0, 0,
+            0,  w/2, -h/2, 1, 1, 1, 0, 0,
+            0,  w/2,  h/2, 1, 0, 1, 0, 0
+        )
+
+        self.vertex_count = 6
+        self.vertices = np.array(self.vertices, dtype=np.float32)
+
+        self.vao = glGenVertexArrays(1)
+        glBindVertexArray(self.vao)
+
+        # Vertices
+        self.vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
+        glBufferData(GL_ARRAY_BUFFER, self.vertices.nbytes, self.vertices, GL_STATIC_DRAW)
+        # position
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 32, ctypes.c_void_p(0))
+        # texture
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 32, ctypes.c_void_p(12))
+        # normal
+        glEnableVertexAttribArray(2)
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 32, ctypes.c_void_p(20))
+
+    def destroy(self):
+        glDeleteVertexArrays(1, (self.vao,))
+        glDeleteBuffers(1, (self.vbo,))
+
+
 if __name__ == "__main__":
     window = initialize_glfw()
     myapp = App(window)
