@@ -10,8 +10,8 @@ import pyrr
 from PIL import Image
 
 
-SCREEN_WIDTH = 640
-SCREEN_HEIGHT = 480
+SCREEN_WIDTH = 1080
+SCREEN_HEIGHT = 720
 RETURN_ACTION_CONTINUE = 0
 RETURN_ACTION_END = 1
 
@@ -337,7 +337,7 @@ class App:
 
 class GraphicsEngine:
     def __init__(self):
-        self.random_texture = Material("textures/queen.png")
+        self.random_texture = Material("textures/wood.jpeg")
         self.cube_mesh = Mesh("models/cube.obj")
         #initialize OpenGL
         glClearColor(0.1, 0.2, 0.2, 1)
