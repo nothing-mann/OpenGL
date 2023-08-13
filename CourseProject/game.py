@@ -225,9 +225,9 @@ class Scene:
         #cube is rotated here.
 
         for cube in self.cubes:
-            cube.eulers[1] +=  0.25 * rate
-            if cube.eulers[1] > 360:
-                cube.eulers[1] -= 360
+            cube.eulers[2] +=  0.25 * rate
+            if cube.eulers[2] > 360:
+                cube.eulers[2] -= 360
 
     #moving the player
     def move_player(self, dPos):
@@ -374,7 +374,7 @@ class GraphicsEngine:
     def __init__(self):
         #initialize OpenGL
         glClearColor(0, 0, 0, 1)
-        self.shader = self.createShader("shaders/vertex.txt", "shaders/fragment.txt")
+        self.shader = self.createShader("shaders1/vertex.txt", "shaders1/fragment.txt")
         glUseProgram(self.shader)
         glUniform1i(glGetUniformLocation(self.shader, "ImageTexture"), 0)
 
