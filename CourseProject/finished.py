@@ -39,7 +39,9 @@ def createShader(vertexFilepath: str, fragmentFilepath: str) -> int:
         fragment_src = f.readlines()
     
     shader = compileProgram(compileShader(vertex_src, GL_VERTEX_SHADER),
-                            compileShader(fragment_src, GL_FRAGMENT_SHADER))
+                            compileShader(fragment_src, GL_FRAGMENT_SHADER),
+                            validate = False
+                        )
     
     return shader
 
@@ -468,7 +470,7 @@ class App:
 
             directionModifier = self.walk_offset_lookup[combo]
             
-            dPos = 0.1 * self.frameTime/16.7 * np.array(
+            dPos = 0.1 * np.array(
                 [
                     np.cos(np.deg2rad(self.scene.camera.eulers[2] + directionModifier)),
                     np.sin(np.deg2rad(self.scene.camera.eulers[2] + directionModifier)),
@@ -592,10 +594,13 @@ class Renderer:
             1, GL_FALSE, projection_transform
         )
         glUniform1i(
-            glGetUniformLocation(self.shaders[PIPELINE_3D], "imageTexture"), 0)
+            glGetUniformLocation(self.shaders[PIPELINE_3D], "imageTexture"), 1)
+        glUniform1i(
+            glGetUniformLocation(self.shaders[PIPELINE_3D], "skyTexture"), 0)
         
-        #TODO: Set the sky pipeline's "imageTexture"
-        #       texture unit to 0.
+        glUseProgram(self.shaders[PIPELINE_SKY])
+        glUniform1i(
+            glGetUniformLocation(self.shaders[PIPELINE_SKY], "imageTexture"), 0)
     
     def get_uniform_locations(self) -> None:
         """ 
@@ -603,21 +608,21 @@ class Renderer:
             on the shader 
         """
 
-        #get the required uniforms for the sky pipeline
-
         glUseProgram(self.shaders[PIPELINE_SKY])
-        self.forwardsLocation = glGetUniformLocation(
-            self.shaders[PIPELINE_SKY], "forwards")
-        self.rightLocation = glGetUniformLocation(
-            self.shaders[PIPELINE_SKY], "right")
-        self.upLocation = glGetUniformLocation(
-            self.shaders[PIPELINE_SKY], "up")
+        self.cameraForwardsLocation = glGetUniformLocation(
+            self.shaders[PIPELINE_SKY], "camera_forwards")
+        self.cameraRightLocation = glGetUniformLocation(
+            self.shaders[PIPELINE_SKY], "camera_right")
+        self.cameraUpLocation = glGetUniformLocation(
+            self.shaders[PIPELINE_SKY], "camera_up")
 
         glUseProgram(self.shaders[PIPELINE_3D])
         self.modelMatrixLocation = glGetUniformLocation(
             self.shaders[PIPELINE_3D], "model")
         self.viewMatrixLocation = glGetUniformLocation(
             self.shaders[PIPELINE_3D], "view")
+        self.cameraPosLocation = glGetUniformLocation(
+            self.shaders[PIPELINE_3D], "viewerPos")
     
     def render(
         self, camera: Player, 
@@ -636,39 +641,33 @@ class Renderer:
 
         #refresh screen
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
+        #draw sky
         glUseProgram(self.shaders[PIPELINE_SKY])
         glDisable(GL_DEPTH_TEST)
-        glUniform3fv(self.forwardsLocation, 1, camera.forwards)
-        glUniform3fv(self.forwardsLocation, 1, camera.right)
-        glUniform3fv(self.forwardsLocation, 1, camera.up)
-
-        mesh = self.meshes[OBJECT_SKY]
-        material = self.materials[OBJECT_SKY]
-        material.use()
-        glBindVertexArray(mesh.vao)
-        glDrawArrays(GL_TRIANGLES, 0, mesh.vertex_count)
-
-        """
-            Task: Draw the sky!
-
-                Use the sky pipeline
-
-                Disable depth testing (We want the sky to
-                    simply be drawn, and not to block anything)
-                
-                Send the camera's data to the uniforms
-
-                Set up the sky texture and draw the sky mesh
-        """
+        self.materials[OBJECT_SKY].use()
+        glUniform3fv(
+            self.cameraForwardsLocation, 1, camera.forwards)
+        glUniform3fv(
+            self.cameraRightLocation, 1, camera.right)
+        glUniform3fv(
+            self.cameraUpLocation, 1, 
+            (self.screenHeight / self.screenWidth) * camera.up)
+        glBindVertexArray(self.meshes[OBJECT_SKY].vao)
+        glDrawArrays(
+            GL_TRIANGLES, 
+            0, self.meshes[OBJECT_SKY].vertex_count)
         
         #Everything else
         glUseProgram(self.shaders[PIPELINE_3D])
-        #Don't forget to re enable depth testing!
         glEnable(GL_DEPTH_TEST)
+
         glUniformMatrix4fv(
             self.viewMatrixLocation, 
             1, GL_FALSE, camera.get_view_transform()
         )
+        glUniform3fv(self.cameraPosLocation, 1, camera.position)
+        self.materials[OBJECT_SKY].use()
 
         for objectType,objectList in renderables.items():
             mesh = self.meshes[objectType]
@@ -767,13 +766,14 @@ class Quad2D(Mesh):
 
 class Material:
 
-    def __init__(self, textureType: int):
+    def __init__(self, textureType: int, textureUnit: int):
         self.texture = glGenTextures(1)
         self.textureType = textureType
+        self.textureUnit = textureUnit
         glBindTexture(textureType, self.texture)
     
     def use(self):
-        glActiveTexture(GL_TEXTURE0)
+        glActiveTexture(GL_TEXTURE0 + self.textureUnit)
         glBindTexture(self.textureType, self.texture)
     
     def destroy(self):
@@ -784,7 +784,7 @@ class Material2D(Material):
     
     def __init__(self, filepath):
         
-        super().__init__(GL_TEXTURE_2D)
+        super().__init__(GL_TEXTURE_2D, 1)
         
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
@@ -802,7 +802,7 @@ class MaterialCubemap(Material):
 
     def __init__(self, filepath):
 
-        super().__init__(GL_TEXTURE_CUBE_MAP)
+        super().__init__(GL_TEXTURE_CUBE_MAP, 0)
 
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
         glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
