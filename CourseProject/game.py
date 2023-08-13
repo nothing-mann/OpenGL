@@ -156,6 +156,12 @@ class Cube:
         self.position = np.array(position, dtype=np.float32)
         self.eulers = np.array(eulers, dtype=np.float32)
 
+class Light:
+    def __init__(self, position, color, strength):
+        self.position = np.array(position, dtype=np.float32)
+        self.color = np.array(color, dtype=np.float32)
+        self.strength = strength
+
 class Player:
     def __init__(self, position):
         self.position = np.array(position, dtype=np.float32)
@@ -181,12 +187,29 @@ class Player:
         self.right = np.cross(self.forwards, globalUp)
         self.up = np.cross(self.right, self.forwards)
 
+#The scene class adds all the entities that are to be rendered in the scene
 class Scene:
     def __init__(self):
         self.cubes = [
             Cube(
             position=[6,0,0],
-            eulers=[0,0,0])
+            eulers=[0,0,0]),
+        ]
+        self.lights = [
+            Light(
+                position= [
+                    np.random.uniform(low=2.0, high=8.0),
+                    np.random.uniform(low=-4.0, high=4.0),
+                    np.random.uniform(low=2.0, high=4.0)
+                ],
+                color= [
+                    np.random.uniform(low=0.0, high=1.0),
+                    np.random.uniform(low=0.0, high=1.0),
+                    np.random.uniform(low=0.0, high=1.0)
+                ],
+                strength=3
+            )
+            for i in range(4)
         ]
         self.player = Player(position=[0,0,2])
 
@@ -211,6 +234,7 @@ class Scene:
         #vertical spinning done so that player cannot look too high up or too low down
         self.player.phi = min(89, max(-89, self.player.phi +dPhi))
         self.player.update_vectors()
+
 
 class App:
     def __init__(self, window):
@@ -335,6 +359,7 @@ class App:
     def quit(self):
         self.renderer.quit()
 
+#everything related to rendering is done here in GraphicsEngine
 class GraphicsEngine:
     def __init__(self):
         self.random_texture = Material("textures/wood.jpeg")
@@ -356,6 +381,25 @@ class GraphicsEngine:
         )
         self.modelMatrixLocation = glGetUniformLocation(self.shader, "model")
         self.viewMatrixLocation = glGetUniformLocation(self.shader, "view")
+        self.lightLocation = {
+            "position":
+                [
+                    glGetUniformLocation(self.shader, f"Lights[{i}].position")
+                    for i in range(4)
+                ],
+            "color":
+                [
+                    glGetUniformLocation(self.shader, f"Lights[{i}].color")
+                    for i in range(4)
+                ],
+            "strength":
+                [
+                    glGetUniformLocation(self.shader, f"Lights[{i}].strength")
+                    for i in range(4)
+                ]
+        }
+        self.cameraPosition = glGetUniformLocation(self.shader, "cameraPosition")
+
     def createShader(self, vertexFilepath, fragmentFilepath):
         with open(vertexFilepath, 'r') as f:
             vertex_src = f.readlines()
@@ -382,6 +426,13 @@ class GraphicsEngine:
             dtype=np.float32
         )
         glUniformMatrix4fv(self.viewMatrixLocation, 1, GL_FALSE, view_transformation)
+
+        for i,light in enumerate(scene.lights):
+            glUniform3fv(self.lightLocation["position"][i], 1, light.position)
+            glUniform3fv(self.lightLocation["color"][i], 1, light.color)
+            glUniform1f(self.lightLocation["strength"][i], light.strength)
+        glUniform3fv(self.cameraPosition, 1, scene.player.position)
+
 
         self.random_texture.use()
         glBindVertexArray(self.cube_mesh.vao)
@@ -442,6 +493,9 @@ class Mesh:
         # texture
         glEnableVertexAttribArray(1)
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 32, ctypes.c_void_p(12))
+        # normal
+        glEnableVertexAttribArray(2)
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 32, ctypes.c_void_p(20))
 
     def arm_for_drawing(self) -> None:
         """
